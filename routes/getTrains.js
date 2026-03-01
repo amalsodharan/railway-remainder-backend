@@ -1,10 +1,14 @@
 import { Router } from "express";
 import UserAgent from "user-agents";
+import axios from "axios";
+import dotenv from "dotenv";
 import Prettify from "../utils/prettify.js";
 import * as cheerio from 'cheerio';
 
 const prettify = new Prettify();
 const router = Router();
+
+dotenv.config();
 
 
 router.get("/getTrain", async (req, resp) => {
@@ -119,20 +123,62 @@ router.get("/stationLive", async (req, resp) => {
   }
 });
 
-router.get("/pnrstatus",async(req,resp)=>{
-  const pnrnumber = req.query.pnr;
-  try {
-    //inspired from RobinKumar5986 (pull request #3)
-    let URL_Train = `https://www.confirmtkt.com/pnr-status/${pnrnumber}`
-    let response = await fetch(URL_Train);
-    let data = await response.text();
-    let json = prettify.PnrStatus(data);
-    resp.send(json)
-  } catch (error) {
-    console.log(error)
+router.get("/pnrstatus", async (req, res) => {
+  const pnr = req.query.pnr;
+
+  if (!pnr || pnr.length !== 10) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid PNR number",
+    });
   }
 
-})
+  try {
+    const response = await axios.get(
+      `https://irctc-indian-railway-pnr-status.p.rapidapi.com/getPNRStatus/${pnr}`,
+      {
+        headers: {
+          "X-RapidAPI-Key": process.env.RAPID_API_KEY,
+          "X-RapidAPI-Host": "irctc-indian-railway-pnr-status.p.rapidapi.com",
+        },
+      }
+    );
 
+    const apiData = response.data?.data;
+
+    if (!apiData) {
+      return res.json({
+        success: false,
+        message: "PNR not found",
+      });
+    }
+
+    const formattedResponse = {
+      success: true,
+      data: {
+        BookingStatus: apiData.chartStatus,
+        TrainName: apiData.trainName,
+        TrainNo: apiData.trainNumber,
+        Doj: apiData.dateOfJourney,
+        BoardingPoint: apiData.boardingPoint,
+        DestinationStation: apiData.destinationStation,
+        Class: apiData.journeyClass,
+        PassengerStatus: apiData.passengerList?.map((p) => ({
+          CurrentStatus: p.currentStatusDetails,
+          CurrentCoach: p.currentCoachId,
+          CurrentBerth: p.currentBerthNo,
+        })),
+      },
+    };
+
+    res.json(formattedResponse);
+  } catch (error) {
+    console.log(error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || "Failed to fetch PNR",
+    });
+  }
+});
 
 export default router;
